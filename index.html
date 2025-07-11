@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>围棋游戏</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#8B4513',
+                        secondary: '#D2B48C',
+                        board: '#E8C19D',
+                        boardBorder: '#5D4037',
+                        black: '#000000',
+                        white: '#FFFFFF',
+                        highlight: '#FF6B35',
+                        tutorial: '#2EC4B6',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .board-grid {
+                background-position: 0 0;
+                background-image: 
+                    linear-gradient(to right, #000 1px, transparent 1px),
+                    linear-gradient(to bottom, #000 1px, transparent 1px);
+            }
+            .stone-black {
+                background: radial-gradient(circle at 35% 35%, #444, #000);
+                box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.5);
+            }
+            .stone-white {
+                background: radial-gradient(circle at 35% 35%, #fff, #ddd);
+                box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.3);
+            }
+            .stone-preview {
+                opacity: 0.5;
+            }
+            .board-coord {
+                @apply absolute flex items-center justify-center text-xs font-medium text-gray-700 bg-board;
+            }
+            .board-marker {
+                @apply absolute w-2 h-2 rounded-full bg-black;
+            }
+            .tutorial-hint {
+                @apply absolute w-[16px] h-[16px] rounded-full bg-tutorial border-2 border-white shadow-lg transform -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer transition-all duration-200 hover:scale-125;
+            }
+            .tutorial-panel {
+                @apply fixed inset-0 bg-black/70 flex items-center justify-center z-50 opacity-0 pointer-events-none transition-opacity duration-300;
+            }
+            .tutorial-content {
+                @apply bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl transform scale-95 transition-transform duration-300;
+            }
+            .tutorial-active {
+                @apply opacity-100 pointer-events-auto;
+            }
+            .tutorial-content-active {
+                @apply scale-100;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="max-w-7xl w-full mx-auto">
+        <header class="text-center mb-6">
+            <h1 class="text-[clamp(2rem,5vw,3rem)] font-bold text-primary mb-2">围棋游戏</h1>
+            <div class="flex justify-center gap-3 mb-2">
+                <button id="play-mode-btn" class="px-4 py-2 bg-primary text-white rounded-lg transition-colors hover:bg-primary/90">
+                    对战模式
+                </button>
+                <button id="tutorial-mode-btn" class="px-4 py-2 bg-tutorial text-white rounded-lg transition-colors hover:bg-tutorial/90">
+                    教学模式
+                </button>
+                <button id="ai-mode-btn" class="px-4 py-2 bg-green-500 text-white rounded-lg transition-colors hover:bg-green-600">
+                    人机对弈模式
+                </button>
+            </div>
+            <p class="text-gray-600 text-lg">双人对弈 · 传统棋艺</p>
+        </header>
+
+        <main class="flex flex-col lg:flex-row items-center justify-center gap-6">
+            <!-- 游戏信息面板 -->
+            <div class="w-full lg:w-64 bg-white rounded-xl shadow-lg p-6 flex flex-col gap-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full stone-black"></div>
+                        <span class="font-medium">黑方</span>
+                    </div>
+                    <span id="black-captured" class="text-lg font-bold">0</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full stone-white"></div>
+                        <span class="font-medium">白方</span>
+                    </div>
+                    <span id="white-captured" class="text-lg font-bold">0</span>
+                </div>
+                <div class="border-t border-gray-200 pt-4">
+                    <div class="flex items-center gap-3 mb-3">
+                        <div id="current-player-icon" class="w-8 h-8 rounded-full stone-black"></div>
+                        <span class="font-medium">当前回合</span>
+                    </div>
+                    <div id="game-message" class="text-gray-600">黑方先行</div>
+                </div>
+                <div class="mt-4 space-y-2">
+                    <button id="undo-btn" class="w-full py-2 px-4 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <i class="fa fa-undo"></i>
+                        <span>悔棋</span>
+                    </button>
+                    <button id="restart-btn" class="w-full py-2 px-4 bg-primary text-white hover:bg-primary/90 rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <i class="fa fa-refresh"></i>
+                        <span>重新开始</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 棋盘 -->
+            <div class="relative flex-grow max-w-[90vw]">
+                <div id="board-container" class="relative mx-auto">
+                    <div id="board" class="relative board-grid cursor-pointer select-none bg-board rounded-lg"></div>
+                    <div id="stones-container" class="absolute inset-0 pointer-events-none"></div>
+                    <div id="preview-stone" class="absolute w-[0px] h-[0px] rounded-full opacity-0 transition-all duration-100 pointer-events-none"></div>
+                    <div id="tutorial-hints" class="absolute inset-0 pointer-events-none"></div>
+                </div>
+                <div class="mt-4 text-center text-gray-500 text-sm">
+                    <p id="game-instruction">点击棋盘交叉点落子</p>
+                </div>
+            </div>
+
+            <!-- 游戏规则 -->
+            <div class="w-full lg:w-64 bg-white rounded-xl shadow-lg p-6 hidden lg:block">
+                <h3 class="text-lg font-bold text-primary mb-3">游戏规则</h3>
+                <ul class="space-y-2 text-gray-600 text-sm">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-circle text-xs mt-1.5"></i>
+                        <span>黑方先行，双方轮流在棋盘交叉点落子</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-circle text-xs mt-1.5"></i>
+                        <span>棋子一旦落下，就不能移动或拿掉</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-circle text-xs mt-1.5"></i>
+                        <span>当一个或多个棋子周围的所有交叉点都被对方棋子占据，这些棋子会被提掉</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-circle text-xs mt-1.5"></i>
+                        <span>禁止重复同一局面（劫争）</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-circle text-xs mt-1.5"></i>
+                        <span>占据棋盘交叉点多的一方获胜</span>
+                    </li>
+                </ul>
+            </div>
+        </main>
+
+        <footer class="mt-10 text-center text-gray-500 text-sm">
+            <p>© 2025 围棋游戏 · 传统棋艺数字化</p>
+        </footer>
+    </div>
+
+    <!-- 教学提示模态框 -->
+    <div id="tutorial-panel" class="tutorial-panel">
+        <div id="tutorial-content" class="tutorial-content">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-primary" id="tutorial-title">围棋基础</h3>
+                <button id="close-tutorial" class="text-gray-500 hover:text-gray-700">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div id="tutorial-text" class="mb-6 text-gray-700">
+                <p>欢迎来到围棋教学模式！在这里，你将学习围棋的基本规则和策略。</p>
+                <p class="mt-2">围棋是一种两人对弈的纯策略型棋类游戏，使用19×19的棋盘，黑白两色的棋子。</p>
+            </div>
+            <div class="flex justify-between">
+                <button id="prev-tutorial" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg transition-colors hover:bg-gray-300">
+                    上一步
+                </button>
+                <button id="next-tutorial" class="px-4 py-2 bg-tutorial text-white rounded-lg transition-colors hover:bg-tutorial/90">
+                    下一步
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 游戏配置
+            const BOARD_SIZE = 19; // 19x19棋盘
+            const CELL_SIZE = 30; // 每个格子的大小(px)
+            const STONE_SIZE = CELL_SIZE * 0.85; // 棋子大小(px)
+            const HALF_STONE = STONE_SIZE / 2; // 棋子半径
+            
+            // 字母表（用于坐标标识）
+            const ALPHABET = 'ABCDEFGHJKLMNOPQRST'; // 围棋中跳过字母I
+
+            // 游戏状态
+            let gameState = {
+                currentPlayer: 'black', // 'black' 或 'white'
+                board: Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null)),
+                capturedStones: { black: 0, white: 0 },
+                history: [],
+                koPosition: null, // 劫争位置
+                gameOver: false,
+                mode: 'play', // 'play' 或 'tutorial' 或 'ai'
+                tutorialStep: 0
+            };
+
+            // 教学内容
+            const tutorialSteps = [
+                {
+                    title: "欢迎学习围棋",
+                    text: "围棋是一种古老的策略性棋类游戏，使用19×19的棋盘和黑白两色的棋子。黑方先行，双方轮流在棋盘交叉点上落子。",
+                    boardSetup: null,
+                    hintPositions: []
+                },
+                {
+                    title: "气的概念",
+                    text: "每个棋子周围的空白交叉点称为“气”。当一个棋子的所有气都被对方棋子占据时，这个棋子就会被提掉。",
+                    boardSetup: (board) => {
+                        // 在棋盘中央放置几个棋子演示气
+                        board[9][9] = 'black'; // 中央一个黑子
+                        board[8][9] = 'white'; // 上方一个白子
+                        board[10][9] = 'white'; // 下方一个白子
+                    },
+                    hintPositions: [{x: 9, y: 9, message: "这个黑子有两个气：左边和右边"}]
+                },
+                {
+                    title: "提子规则",
+                    text: "当一组相连的同色棋子的所有气都被对方占据时，这组棋子会被从棋盘上提掉。提子是围棋的基本操作之一。",
+                    boardSetup: (board) => {
+                        // 演示提子
+                        board[8][7] = 'white';
+                        board[8][8] = 'white';
+                        board[9][7] = 'white';
+                        
+                        board[7][7] = 'black';
+                        board[7][8] = 'black';
+                        board[8][9] = 'black';
+                        board[9][8] = 'black';
+                    },
+                    hintPositions: [{x: 9, y: 7, message: "如果黑方在这里落子，这些白子就会被提掉"}]
+                },
+                {
+                    title: "眼的概念",
+                    text: "“眼”是指由同色棋子围成的一个或多个空白交叉点。眼对于棋子的生存非常重要，拥有两个真眼的棋组是不可被提掉的。",
+                    boardSetup: (board) => {
+                        // 演示眼
+                        board[5][5] = 'black';
+                        board[5][6] = 'black';
+                        board[5][7] = 'black';
+                        board[6][5] = 'black';
+                        board[6][7] = 'black';
+                        board[7][5] = 'black';
+                        board[7][6] = 'black';
+                        board[7][7] = 'black';
+                    },
+                    hintPositions: [
+                        {x: 6, y: 6, message: "这个空白交叉点是一个“眼”"}
+                    ]
+                },
+                {
+                    title: "劫争规则",
+                    text: "劫争是指双方可以轮流提子的情况。为了防止无限循环，围棋规则规定不能立即回提，必须在其他地方落子后才能再次提劫。",
+                    boardSetup: (board) => {
+                        // 演示劫
+                        board[3][3] = 'black';
+                        board[3][5] = 'black';
+                        board[4][4] = 'white';
+                        board[5][3] = 'black';
+                        board[5][5] = 'black';
+                        
+                        board[3][4] = 'white';
+                        board[4][3] = 'white';
+                        board[4][5] = 'white';
+                        board[5][4] = 'white';
+                    },
+                    hintPositions: [
+                        {x: 4, y: 4, message: "这是一个劫争局面，黑方不能立即提回这个白子"}
+                    ]
+                },
+                {
+                    title: "实战开始",
+                    text: "现在你已经了解了围棋的基本规则，可以开始实战练习了！试着在棋盘上落子，体验围棋的乐趣。",
+                    boardSetup: null,
+                    hintPositions: []
+                }
+            ];
+
+            // 获取DOM元素
+            const boardContainer = document.getElementById('board-container');
+            const boardElement = document.getElementById('board');
+            const stonesContainer = document.getElementById('stones-container');
+            const previewStone = document.getElementById('preview-stone');
+            const blackCapturedElement = document.getElementById('black-captured');
+            const whiteCapturedElement = document.getElementById('white-captured');
+            const currentPlayerIcon = document.getElementById('current-player-icon');
+            const gameMessageElement = document.getElementById('game-message');
+            const undoButton = document.getElementById('undo-btn');
+            const restartButton = document.getElementById('restart-btn');
+            const playModeButton = document.getElementById('play-mode-btn');
+            const tutorialModeButton = document.getElementById('tutorial-mode-btn');
+            const aiModeButton = document.getElementById('ai-mode-btn');
+            const tutorialPanel = document.getElementById('tutorial-panel');
+            const tutorialContent = document.getElementById('tutorial-content');
+            const tutorialTitle = document.getElementById('tutorial-title');
+            const tutorialText = document.getElementById('tutorial-text');
+            const prevTutorialButton = document.getElementById('prev-tutorial');
+            const nextTutorialButton = document.getElementById('next-tutorial');
+            const closeTutorialButton = document.getElementById('close-tutorial');
+            const tutorialHints = document.getElementById('tutorial-hints');
+            const gameInstruction = document.getElementById('game-instruction');
+
+            // 设置棋盘大小
+            const boardDimension = CELL_SIZE * (BOARD_SIZE - 1); // 19条线需要18个间隔
+            boardElement.style.width = `${boardDimension}px`;
+            boardElement.style.height = `${boardDimension}px`;
+            boardContainer.style.width = `${boardDimension}px`;
+            boardContainer.style.height = `${boardDimension}px`;
+
+            // 初始化棋盘
+            function initializeBoard() {
+                // 清空棋盘
+                stonesContainer.innerHTML = '';
+                document.querySelectorAll('.board-coord').forEach(coord => coord.remove());
+                document.querySelectorAll('.board-marker').forEach(marker => marker.remove());
+                tutorialHints.innerHTML = '';
+                
+                // 创建棋盘网格
+                boardElement.style.backgroundSize = `${CELL_SIZE}px ${CELL_SIZE}px`;
+                
+                // 添加坐标标识 - 只在左侧和底部显示，且与线条对齐
+                for (let i = 0; i < BOARD_SIZE; i++) {
+                    // 底部坐标（横向坐标，字母）
+                    const bottomCoord = document.createElement('div');
+                    bottomCoord.className = 'board-coord';
+                    bottomCoord.textContent = ALPHABET[i];
+                    bottomCoord.style.left = `${i * CELL_SIZE}px`; // 与线条对齐
+                    bottomCoord.style.bottom = `-${CELL_SIZE / 2}px`;
+                    bottomCoord.style.width = `${CELL_SIZE}px`;
+                    bottomCoord.style.height = `${CELL_SIZE / 2}px`;
+                    boardElement.appendChild(bottomCoord);
+                    
+                    // 左侧坐标（纵向坐标，数字）
+                    const leftCoord = document.createElement('div');
+                    leftCoord.className = 'board-coord';
+                    leftCoord.textContent = BOARD_SIZE - i;
+                    leftCoord.style.left = `-${CELL_SIZE / 2}px`;
+                    leftCoord.style.top = `${i * CELL_SIZE}px`; // 与线条对齐
+                    leftCoord.style.width = `${CELL_SIZE / 2}px`;
+                    leftCoord.style.height = `${CELL_SIZE}px`;
+                    boardElement.appendChild(leftCoord);
+                }
+                
+                // 添加天元和星位标记（围棋标准位置）
+                const starPoints = [
+                    {x: 3, y: 3}, {x: 3, y: 9}, {x: 3, y: 15},
+                    {x: 9, y: 3}, {x: 9, y: 9}, {x: 9, y: 15},
+                    {x: 15, y: 3}, {x: 15, y: 9}, {x: 15, y: 15}
+                ];
+                
+                starPoints.forEach(point => {
+                    const marker = document.createElement('div');
+                    marker.className = 'board-marker';
+                    marker.style.left = `${point.x * CELL_SIZE - 4}px`; // 4px = 8px(标记宽度)/2
+                    marker.style.top = `${point.y * CELL_SIZE - 4}px`;  // 4px = 8px(标记高度)/2
+                    boardElement.appendChild(marker);
+                });
+                
+                // 重置游戏状态
+                gameState = {
+                    currentPlayer: 'black',
+                    board: Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null)),
+                    capturedStones: { black: 0, white: 0 },
+                    history: [],
+                    koPosition: null,
+                    gameOver: false,
+                    mode: gameState.mode, // 保持当前模式
+                    tutorialStep: gameState.tutorialStep
+                };
+                
+                // 如果是教学模式，设置当前教学步骤的棋盘
+                if (gameState.mode === 'tutorial') {
+                    setupTutorialBoard();
+                    showTutorialHints();
+                }
+                
+                // 更新UI
+                updateGameUI();
+                
+                // 渲染棋盘
+                renderBoard();
+                
+                // 显示游戏重置通知
+                showNotification(`${gameState.mode === 'play' ? '对战' : gameState.mode === 'tutorial' ? '教学' : '人机对弈'}模式已启动`, 'success');
+            }
+
+            // 设置教学模式的棋盘
+            function setupTutorialBoard() {
+                const currentStep = tutorialSteps[gameState.tutorialStep];
+                if (currentStep.boardSetup) {
+                    // 清空棋盘
+                    gameState.board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
+                    // 设置教学用的棋子
+                    currentStep.boardSetup(gameState.board);
+                } else {
+                    // 如果没有设置，清空棋盘
+                    gameState.board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(null));
+                }
+            }
+
+            // 显示教学提示
+            function showTutorialHints() {
+                tutorialHints.innerHTML = '';
+                
+                const currentStep = tutorialSteps[gameState.tutorialStep];
+                currentStep.hintPositions.forEach(pos => {
+                    const hint = document.createElement('div');
+                    hint.className = 'tutorial-hint';
+                    hint.style.left = `${pos.x * CELL_SIZE}px`;
+                    hint.style.top = `${pos.y * CELL_SIZE}px`;
+                    hint.dataset.message = pos.message;
+                    
+                    // 点击提示显示详细信息
+                    hint.addEventListener('click', () => {
+                        showNotification(pos.message, 'info');
+                    });
+                    
+                    tutorialHints.appendChild(hint);
+                });
+            }
+
+            // 显示当前教学步骤
+            function showCurrentTutorialStep() {
+                const currentStep = tutorialSteps[gameState.tutorialStep];
+                tutorialTitle.textContent = currentStep.title;
+                tutorialText.innerHTML = currentStep.text;
+                
+                // 更新按钮状态
+                prevTutorialButton.disabled = gameState.tutorialStep === 0;
+                prevTutorialButton.classList.toggle('opacity-50', gameState.tutorialStep === 0);
+                
+                nextTutorialButton.disabled = gameState.tutorialStep === tutorialSteps.length - 1;
+                nextTutorialButton.classList.toggle('opacity-50', gameState.tutorialStep === tutorialSteps.length - 1);
+                
+                // 显示教学面板
+                tutorialPanel.classList.add('tutorial-active');
+                setTimeout(() => {
+                    tutorialContent.classList.add('tutorial-content-active');
+                }, 50);
+            }
+
+            // 更新游戏UI
+            function updateGameUI() {
+                // 更新当前玩家指示器
+                currentPlayerIcon.className = `w-8 h-8 rounded-full ${gameState.currentPlayer === 'black' ? 'stone-black' : 'stone-white'}`;
+                
+                // 更新被提子数
+                blackCapturedElement.textContent = gameState.capturedStones.black;
+                whiteCapturedElement.textContent = gameState.capturedStones.white;
+                
+                // 更新游戏消息
+                if (gameState.gameOver) {
+                    const winner = gameState.capturedStones.black > gameState.capturedStones.white ? '黑方' : '白方';
+                    gameMessageElement.textContent = `游戏结束，${winner}获胜！`;
+                } else {
+                    gameMessageElement.textContent = `${gameState.currentPlayer === 'black' ? '黑方' : '白方'}回合`;
+                }
+                
+                // 更新按钮状态
+                undoButton.disabled = gameState.history.length === 0;
+                undoButton.classList.toggle('opacity-50', gameState.history.length === 0);
+                
+                // 更新游戏说明
+                if (gameState.mode === 'tutorial') {
+                    gameInstruction.textContent = `教学模式：${tutorialSteps[gameState.tutorialStep].title}`;
+                } else if (gameState.mode === 'ai') {
+                    gameInstruction.textContent = `人机对弈模式：${gameState.currentPlayer === 'black' ? '你的回合' : 'AI回合'}`;
+                } else {
+                    gameInstruction.textContent = "点击棋盘交叉点落子";
+                }
+                
+                // 更新模式按钮样式
+                playModeButton.classList.toggle('bg-primary', gameState.mode === 'play');
+                playModeButton.classList.toggle('bg-gray-400', gameState.mode !== 'play');
+                tutorialModeButton.classList.toggle('bg-tutorial', gameState.mode === 'tutorial');
+                tutorialModeButton.classList.toggle('bg-gray-400', gameState.mode !== 'tutorial');
+                aiModeButton.classList.toggle('bg-green-500', gameState.mode === 'ai');
+                aiModeButton.classList.toggle('bg-gray-400', gameState.mode !== 'ai');
+            }
+
+            // 检查坐标是否在棋盘内
+            function isOnBoard(x, y) {
+                return x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE;
+            }
+
+            // 获取棋子的气（相邻的空格）
+            function getLiberties(x, y, color) {
+                const visited = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(false));
+                const liberties = new Set();
+                const queue = [{ x, y }];
+                visited[y][x] = true;
+
+                while (queue.length > 0) {
+                    const { x: currentX, y: currentY } = queue.shift();
+
+                    // 检查四个方向
+                    const directions = [
+                        { dx: -1, dy: 0 },
+                        { dx: 1, dy: 0 },
+                        { dx: 0, dy: -1 },
+                        { dx: 0, dy: 1 }
+                    ];
+
+                    for (const { dx, dy } of directions) {
+                        const newX = currentX + dx;
+                        const newY = currentY + dy;
+
+                        if (!isOnBoard(newX, newY)) continue;
+
+                        if (gameState.board[newY][newX] === null) {
+                            liberties.add(`${newX},${newY}`);
+                        } else if (gameState.board[newY][newX] === color && !visited[newY][newX]) {
+                            visited[newY][newX] = true;
+                            queue.push({ x: newX, y: newY });
+                        }
+                    }
+                }
+
+                return liberties.size;
+            }
+
+            // 移除没有气的棋子组
+            function removeDeadStones(opponentColor) {
+                const removed = [];
+                const visited = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(false));
+
+                for (let y = 0; y < BOARD_SIZE; y++) {
+                    for (let x = 0; x < BOARD_SIZE; x++) {
+                        if (gameState.board[y][x] === opponentColor && !visited[y][x]) {
+                            // 找到一个未访问的对手棋子
+                            const group = [];
+                            const queue = [{ x, y }];
+                            visited[y][x] = true;
+                            group.push({ x, y });
+
+                            while (queue.length > 0) {
+                                const { x: currentX, y: currentY } = queue.shift();
+
+                                // 检查四个方向
+                                const directions = [
+                                    { dx: -1, dy: 0 },
+                                    { dx: 1, dy: 0 },
+                                    { dx: 0, dy: -1 },
+                                    { dx: 0, dy: 1 }
+                                ];
+
+                                for (const { dx, dy } of directions) {
+                                    const newX = currentX + dx;
+                                    const newY = currentY + dy;
+
+                                    if (!isOnBoard(newX, newY)) continue;
+
+                                    if (gameState.board[newY][newX] === opponentColor && !visited[newY][newX]) {
+                                        visited[newY][newX] = true;
+                                        queue.push({ x: newX, y: newY });
+                                        group.push({ x: newX, y: newY });
+                                    }
+                                }
+                            }
+
+                            // 检查这个棋子组是否没有气
+                            let hasLiberty = false;
+                            for (const { x: groupX, y: groupY } of group) {
+                                // 检查四个方向
+                                const directions = [
+                                    { dx: -1, dy: 0 },
+                                    { dx: 1, dy: 0 },
+                                    { dx: 0, dy: -1 },
+                                    { dx: 0, dy: 1 }
+                                ];
+
+                                for (const { dx, dy } of directions) {
+                                    const newX = groupX + dx;
+                                    const newY = groupY + dy;
+
+                                    if (isOnBoard(newX, newY) && gameState.board[newY][newX] === null) {
+                                        hasLiberty = true;
+                                        break;
+                                    }
+                                }
+
+                                if (hasLiberty) break;
+                            }
+
+                            // 如果没有气，移除这个棋子组
+                            if (!hasLiberty) {
+                                for (const { x: groupX, y: groupY } of group) {
+                                    gameState.board[groupY][groupX] = null;
+                                    removed.push({ x: groupX, y: groupY });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return removed;
+            }
+
+            // 检查是否是劫争
+            function isKo(x, y, removedStones) {
+                // 如果只移除了一个棋子，可能是劫争
+                if (removedStones.length === 1) {
+                    const { x: removedX, y: removedY } = removedStones[0];
+                    
+                    // 检查是否是对手的棋子被移除
+                    const opponentColor = gameState.currentPlayer === 'black' ? 'white' : 'black';
+                    
+                    // 检查历史记录中是否有相同的局面
+                    if (gameState.history.length >= 2) {
+                        // 获取两步前的局面
+                        const previousBoard = gameState.history[gameState.history.length - 2];
+                        
+                        // 检查当前局面是否与两步前的局面相同（除了劫争点）
+                        let isSame = true;
+                        for (let i = 0; i < BOARD_SIZE; i++) {
+                            for (let j = 0; j < BOARD_SIZE; j++) {
+                                if (i === y && j === x) {
+                                    // 当前落子点在两步前应该是空白
+                                    if (previousBoard[i][j] !== null) {
+                                        isSame = false;
+                                        break;
+                                    }
+                                } else if (i === removedY && j === removedX) {
+                                    // 被提子的点在两步前应该是对手的棋子
+                                    if (previousBoard[i][j] !== opponentColor) {
+                                        isSame = false;
+                                        break;
+                                    }
+                                } else {
+                                    // 其他点应该相同
+                                    if (gameState.board[i][j] !== previousBoard[i][j]) {
+                                        isSame = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!isSame) break;
+                        }
+                        
+                        if (isSame) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            // 放置棋子
+            function placeStone(x, y) {
+                // 如果是教学模式且不在最后一步，不允许放置棋子
+                if (gameState.mode === 'tutorial' && gameState.tutorialStep < tutorialSteps.length - 1) {
+                    showNotification("请先完成当前教学步骤", 'info');
+                    return false;
+                }
+                
+                // 检查是否在游戏进行中
+                if (gameState.gameOver) return false;
+                
+                // 检查坐标是否在棋盘内
+                if (!isOnBoard(x, y)) {
+                    gameMessageElement.textContent = "请在棋盘交叉点落子";
+                    setTimeout(() => {
+                        gameMessageElement.textContent = `${gameState.currentPlayer === 'black' ? '黑方' : '白方'}回合`;
+                    }, 1500);
+                    return false;
+                }
+                
+                // 检查是否已有棋子
+                if (gameState.board[y][x] !== null) {
+                    gameMessageElement.textContent = "此交叉点已有棋子";
+                    setTimeout(() => {
+                        gameMessageElement.textContent = `${gameState.currentPlayer === 'black' ? '黑方' : '白方'}回合`;
+                    }, 1500);
+                    return false;
+                }
+                
+                // 保存当前局面用于悔棋
+                const previousBoard = JSON.parse(JSON.stringify(gameState.board));
+                gameState.history.push(previousBoard);
+                
+                // 放置棋子
+                gameState.board[y][x] = gameState.currentPlayer;
+                
+                // 获取对手颜色
+                const opponentColor = gameState.currentPlayer === 'black' ? 'white' : 'black';
+                
+                // 移除对手没有气的棋子
+                const removedStones = removeDeadStones(opponentColor);
+                
+                // 更新被提子数
+                gameState.capturedStones[gameState.currentPlayer] += removedStones.length;
+                
+                // 检查劫争
+                if (removedStones.length === 1 && isKo(x, y, removedStones)) {
+                    // 这是一个劫争，撤销落子
+                    gameState.board[y][x] = null;
+                    gameState.history.pop();
+                    gameMessageElement.textContent = "禁止劫争循环";
+                    setTimeout(() => {
+                        gameMessageElement.textContent = `${gameState.currentPlayer === 'black' ? '黑方' : '白方'}回合`;
+                    }, 1500);
+                    return false;
+                }
+                
+                // 检查当前玩家的棋子是否没有气
+                if (getLiberties(x, y, gameState.currentPlayer) === 0) {
+                    // 自杀，撤销落子
+                    gameState.board[y][x] = null;
+                    gameState.history.pop();
+                    gameMessageElement.textContent = "禁止自杀";
+                    setTimeout(() => {
+                        gameMessageElement.textContent = `${gameState.currentPlayer === 'black' ? '黑方' : '白方'}回合`;
+                    }, 1500);
+                    return false;
+                }
+                
+                // 更新棋盘UI
+                renderBoard();
+                
+                // 切换当前玩家
+                gameState.currentPlayer = gameState.currentPlayer === 'black' ? 'white' : 'black';
+                
+                // 更新游戏UI
+                updateGameUI();
+                
+                // 如果是人机对弈模式且轮到AI
+                if (gameState.mode === 'ai' && gameState.currentPlayer === 'white') {
+                    setTimeout(() => {
+                        aiMove();
+                    }, 500);
+                }
+                
+                return true;
+            }
+
+            // 渲染棋盘
+            function renderBoard() {
+                // 清空棋盘上的棋子
+                stonesContainer.innerHTML = '';
+                
+                for (let y = 0; y < BOARD_SIZE; y++) {
+                    for (let x = 0; x < BOARD_SIZE; x++) {
+                        if (gameState.board[y][x]) {
+                            const stone = document.createElement('div');
+                            stone.className = `absolute w-[${STONE_SIZE}px] h-[${STONE_SIZE}px] rounded-full ${gameState.board[y][x] === 'black' ? 'stone-black' : 'stone-white'}`;
+                            stone.style.left = `${x * CELL_SIZE - HALF_STONE}px`;
+                            stone.style.top = `${y * CELL_SIZE - HALF_STONE}px`;
+                            stonesContainer.appendChild(stone);
+                        }
+                    }
+                }
+            }
+
+            // AI落子逻辑（简单随机落子）
+            function aiMove() {
+                const availableMoves = [];
+                for (let y = 0; y < BOARD_SIZE; y++) {
+                    for (let x = 0; x < BOARD_SIZE; x++) {
+                        if (gameState.board[y][x] === null) {
+                            availableMoves.push({ x, y });
+                        }
+                    }
+                }
+
+                if (availableMoves.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * availableMoves.length);
+                    const { x, y } = availableMoves[randomIndex];
+                    placeStone(x, y);
+                }
+            }
+
+            // 显示通知
+            function showNotification(message, type) {
+                // 简单实现，可根据需求扩展
+                console.log(`[${type}] ${message}`);
+            }
+
+            // 处理棋盘点击事件
+            boardElement.addEventListener('click', (event) => {
+                const rect = boardElement.getBoundingClientRect();
+                const x = Math.round((event.clientX - rect.left) / CELL_SIZE);
+                const y = Math.round((event.clientY - rect.top) / CELL_SIZE);
+
+                placeStone(x, y);
+            });
+
+            // 处理模式切换按钮点击事件
+            playModeButton.addEventListener('click', () => {
+                gameState.mode = 'play';
+                initializeBoard();
+            });
+
+            tutorialModeButton.addEventListener('click', () => {
+                gameState.mode = 'tutorial';
+                gameState.tutorialStep = 0;
+                initializeBoard();
+                showCurrentTutorialStep();
+            });
+
+            aiModeButton.addEventListener('click', () => {
+                gameState.mode = 'ai';
+                initializeBoard();
+            });
+
+            // 处理悔棋按钮点击事件
+            undoButton.addEventListener('click', () => {
+                if (gameState.history.length > 0) {
+                    gameState.board = gameState.history.pop();
+                    gameState.currentPlayer = gameState.currentPlayer === 'black' ? 'white' : 'black';
+                    updateGameUI();
+                    renderBoard();
+                }
+            });
+
+            // 处理重新开始按钮点击事件
+            restartButton.addEventListener('click', () => {
+                initializeBoard();
+            });
+
+            // 处理教学模式按钮点击事件
+            prevTutorialButton.addEventListener('click', () => {
+                if (gameState.tutorialStep > 0) {
+                    gameState.tutorialStep--;
+                    setupTutorialBoard();
+                    showTutorialHints();
+                    showCurrentTutorialStep();
+                    renderBoard();
+                }
+            });
+
+            nextTutorialButton.addEventListener('click', () => {
+                if (gameState.tutorialStep < tutorialSteps.length - 1) {
+                    gameState.tutorialStep++;
+                    setupTutorialBoard();
+                    showTutorialHints();
+                    showCurrentTutorialStep();
+                    renderBoard();
+                }
+            });
+
+            closeTutorialButton.addEventListener('click', () => {
+                tutorialPanel.classList.remove('tutorial-active');
+                tutorialContent.classList.remove('tutorial-content-active');
+            });
+
+            // 初始化棋盘
+            initializeBoard();
+        });
+    </script>
+</body>
+</html>
