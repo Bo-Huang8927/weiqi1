@@ -375,6 +375,10 @@
                     let currentPlayer = getCurrentPlayer(currentState);
                     while (!isGameOver(currentState)) {
                         const availableMoves = getAvailableMoves(currentState);
+                        if (availableMoves.length === 0) {
+                            // 没有可用移动，游戏结束
+                            break;
+                        }
                         const randomMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
                         currentState = simulateMove(currentState, randomMove);
                         currentPlayer = getCurrentPlayer(currentState);
@@ -433,13 +437,25 @@
 
             // 获取获胜者
             function getWinner(state) {
-                // 简单示例：可以根据实际情况修改
+                // 简单示例：根据提子数量判断
+                if (state.capturedStones.black > state.capturedStones.white) {
+                    return 'black';
+                } else if (state.capturedStones.white > state.capturedStones.black) {
+                    return 'white';
+                }
                 return null;
             }
 
             // 蒙特卡罗树搜索算法
             function monteCarloTreeSearch(state, iterations = 1000) {
                 const root = new MCTSNode(null, null, state);
+                
+                // 检查是否有可用的移动
+                const availableMoves = getAvailableMoves(state);
+                if (availableMoves.length === 0) {
+                    return null;
+                }
+                
                 for (let i = 0; i < iterations; i++) {
                     let node = root;
                     // 选择
@@ -455,7 +471,13 @@
                     // 反向传播
                     node.backpropagate(result);
                 }
-                return root.selectChild().move;
+                
+                // 选择访问次数最多的子节点
+                const bestChild = root.children.reduce((best, child) => {
+                    return child.visits > best.visits ? child : best;
+                }, root.children[0]);
+                
+                return bestChild.move;
             }
 
             // 初始化棋盘
@@ -671,13 +693,13 @@
             }
 
             // 移除没有气的棋子组
-            function removeDeadStones(opponentColor) {
+            function removeDeadStones(state, color) {
                 const removed = [];
                 const visited = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(false));
 
                 for (let y = 0; y < BOARD_SIZE; y++) {
                     for (let x = 0; x < BOARD_SIZE; x++) {
-                        if (gameState.board[y][x] === opponentColor && !visited[y][x]) {
+                        if (state.board[y][x] === color && !visited[y][x]) {
                             // 找到一个未访问的对手棋子
                             const group = [];
                             const queue = [{ x, y }];
@@ -701,7 +723,7 @@
 
                                     if (!isOnBoard(newX, newY)) continue;
 
-                                    if (gameState.board[newY][newX] === opponentColor && !visited[newY][newX]) {
+                                    if (state.board[newY][newX] === color && !visited[newY][newX]) {
                                         visited[newY][newX] = true;
                                         queue.push({ x: newX, y: newY });
                                         group.push({ x: newX, y: newY });
@@ -724,7 +746,7 @@
                                     const newX = groupX + dx;
                                     const newY = groupY + dy;
 
-                                    if (isOnBoard(newX, newY) && gameState.board[newY][newX] === null) {
+                                    if (isOnBoard(newX, newY) && state.board[newY][newX] === null) {
                                         hasLiberty = true;
                                         break;
                                     }
@@ -736,7 +758,7 @@
                             // 如果没有气，移除这个棋子组
                             if (!hasLiberty) {
                                 for (const { x: groupX, y: groupY } of group) {
-                                    gameState.board[groupY][groupX] = null;
+                                    state.board[groupY][groupX] = null;
                                     removed.push({ x: groupX, y: groupY });
                                 }
                             }
@@ -836,7 +858,7 @@
                 const opponentColor = gameState.currentPlayer === 'black' ? 'white' : 'black';
                 
                 // 移除对手没有气的棋子
-                const removedStones = removeDeadStones(opponentColor);
+                const removedStones = removeDeadStones(gameState, opponentColor);
                 
                 // 更新被提子数
                 gameState.capturedStones[gameState.currentPlayer] += removedStones.length;
@@ -867,6 +889,9 @@
                 
                 // 更新棋盘UI
                 renderBoard();
+                
+                // 显示落子通知
+                showNotification(`${gameState.currentPlayer === 'black' ? '黑方' : '白方'}在${ALPHABET[x]}${BOARD_SIZE - y}落子`, 'info');
                 
                 // 切换当前玩家
                 gameState.currentPlayer = gameState.currentPlayer === 'black' ? 'white' : 'black';
@@ -905,10 +930,19 @@
             // 修改 AI 落子逻辑
             function aiMove() {
                 if (gameState.mode === 'ai' && gameState.currentPlayer === 'white') {
-                    const move = monteCarloTreeSearch(gameState);
-                    placeStone(move.x, move.y);
-                    gameState.currentPlayer = 'black';
-                    updateGameUI();
+                    showNotification("AI正在思考...", 'info');
+                    setTimeout(() => {
+                        const move = monteCarloTreeSearch(gameState, 1000);
+                        if (move) {
+                            placeStone(move.x, move.y);
+                            showNotification(`AI在${ALPHABET[move.x]}${BOARD_SIZE - move.y}落子`, 'info');
+                        } else {
+                            showNotification("AI没有找到可用的落子位置", 'info');
+                            // 切换回玩家回合
+                            gameState.currentPlayer = 'black';
+                            updateGameUI();
+                        }
+                    }, 500);
                 }
             }
 
@@ -916,6 +950,31 @@
             function showNotification(message, type) {
                 // 简单实现，可根据需求扩展
                 console.log(`[${type}] ${message}`);
+                
+                // 创建通知元素
+                const notification = document.createElement('div');
+                notification.className = `fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-500 transform translate-x-full opacity-0 ${
+                    type === 'success' ? 'bg-green-500 text-white' : 
+                    type === 'info' ? 'bg-blue-500 text-white' : 
+                    'bg-red-500 text-white'
+                }`;
+                notification.textContent = message;
+                
+                // 添加到页面
+                document.body.appendChild(notification);
+                
+                // 显示通知
+                setTimeout(() => {
+                    notification.classList.remove('translate-x-full', 'opacity-0');
+                }, 10);
+                
+                // 3秒后隐藏通知
+                setTimeout(() => {
+                    notification.classList.add('translate-x-full', 'opacity-0');
+                    setTimeout(() => {
+                        document.body.removeChild(notification);
+                    }, 500);
+                }, 3000);
             }
 
             // 处理棋盘点击事件
@@ -952,12 +1011,14 @@
                     gameState.currentPlayer = gameState.currentPlayer === 'black' ? 'white' : 'black';
                     updateGameUI();
                     renderBoard();
+                    showNotification("已悔棋一步", 'info');
                 }
             });
 
             // 处理重新开始按钮点击事件
             restartButton.addEventListener('click', () => {
                 initializeBoard();
+                showNotification("游戏已重新开始", 'success');
             });
 
             // 处理教学模式按钮点击事件
@@ -992,3 +1053,4 @@
     </script>
 </body>
 </html>
+    
