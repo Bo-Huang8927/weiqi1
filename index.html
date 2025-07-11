@@ -332,6 +332,132 @@
             boardContainer.style.width = `${boardDimension}px`;
             boardContainer.style.height = `${boardDimension}px`;
 
+            // 定义 MCTS 节点类
+            class MCTSNode {
+                constructor(parent, move, state) {
+                    this.parent = parent;
+                    this.move = move;
+                    this.state = state;
+                    this.children = [];
+                    this.visits = 0;
+                    this.wins = 0;
+                }
+
+                // 计算 UCB1 值
+                ucb1(c = 1.41) {
+                    if (this.visits === 0) {
+                        return Infinity;
+                    }
+                    return (this.wins / this.visits) + c * Math.sqrt(Math.log(this.parent.visits) / this.visits);
+                }
+
+                // 选择最佳子节点
+                selectChild() {
+                    return this.children.reduce((best, child) => {
+                        return child.ucb1() > best.ucb1() ? child : best;
+                    }, this.children[0]);
+                }
+
+                // 扩展节点
+                expand() {
+                    const availableMoves = getAvailableMoves(this.state);
+                    for (const move of availableMoves) {
+                        const newState = simulateMove(this.state, move);
+                        const child = new MCTSNode(this, move, newState);
+                        this.children.push(child);
+                    }
+                    return this.children[Math.floor(Math.random() * this.children.length)];
+                }
+
+                // 模拟游戏
+                simulate() {
+                    let currentState = JSON.parse(JSON.stringify(this.state));
+                    let currentPlayer = getCurrentPlayer(currentState);
+                    while (!isGameOver(currentState)) {
+                        const availableMoves = getAvailableMoves(currentState);
+                        const randomMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+                        currentState = simulateMove(currentState, randomMove);
+                        currentPlayer = getCurrentPlayer(currentState);
+                    }
+                    return getWinner(currentState);
+                }
+
+                // 反向传播结果
+                backpropagate(result) {
+                    let node = this;
+                    while (node) {
+                        node.visits++;
+                        if (result === getCurrentPlayer(node.state)) {
+                            node.wins++;
+                        }
+                        node = node.parent;
+                    }
+                }
+            }
+
+            // 获取可用落子位置
+            function getAvailableMoves(state) {
+                const moves = [];
+                for (let y = 0; y < BOARD_SIZE; y++) {
+                    for (let x = 0; x < BOARD_SIZE; x++) {
+                        if (state.board[y][x] === null) {
+                            moves.push({ x, y });
+                        }
+                    }
+                }
+                return moves;
+            }
+
+            // 模拟落子
+            function simulateMove(state, move) {
+                const newState = JSON.parse(JSON.stringify(state));
+                const currentPlayer = getCurrentPlayer(newState);
+                newState.board[move.y][move.x] = currentPlayer;
+                const opponentColor = currentPlayer === 'black' ? 'white' : 'black';
+                const removedStones = removeDeadStones(newState, opponentColor);
+                newState.capturedStones[currentPlayer] += removedStones.length;
+                newState.currentPlayer = opponentColor;
+                return newState;
+            }
+
+            // 获取当前玩家
+            function getCurrentPlayer(state) {
+                return state.currentPlayer;
+            }
+
+            // 检查游戏是否结束
+            function isGameOver(state) {
+                // 简单示例：可以根据实际情况修改
+                return false;
+            }
+
+            // 获取获胜者
+            function getWinner(state) {
+                // 简单示例：可以根据实际情况修改
+                return null;
+            }
+
+            // 蒙特卡罗树搜索算法
+            function monteCarloTreeSearch(state, iterations = 1000) {
+                const root = new MCTSNode(null, null, state);
+                for (let i = 0; i < iterations; i++) {
+                    let node = root;
+                    // 选择
+                    while (node.children.length > 0) {
+                        node = node.selectChild();
+                    }
+                    // 扩展
+                    if (!isGameOver(node.state)) {
+                        node = node.expand();
+                    }
+                    // 模拟
+                    const result = node.simulate();
+                    // 反向传播
+                    node.backpropagate(result);
+                }
+                return root.selectChild().move;
+            }
+
             // 初始化棋盘
             function initializeBoard() {
                 // 清空棋盘
@@ -776,21 +902,13 @@
                 }
             }
 
-            // AI落子逻辑（简单随机落子）
+            // 修改 AI 落子逻辑
             function aiMove() {
-                const availableMoves = [];
-                for (let y = 0; y < BOARD_SIZE; y++) {
-                    for (let x = 0; x < BOARD_SIZE; x++) {
-                        if (gameState.board[y][x] === null) {
-                            availableMoves.push({ x, y });
-                        }
-                    }
-                }
-
-                if (availableMoves.length > 0) {
-                    const randomIndex = Math.floor(Math.random() * availableMoves.length);
-                    const { x, y } = availableMoves[randomIndex];
-                    placeStone(x, y);
+                if (gameState.mode === 'ai' && gameState.currentPlayer === 'white') {
+                    const move = monteCarloTreeSearch(gameState);
+                    placeStone(move.x, move.y);
+                    gameState.currentPlayer = 'black';
+                    updateGameUI();
                 }
             }
 
