@@ -217,7 +217,8 @@
                 koPosition: null, // 劫争位置
                 gameOver: false,
                 mode: 'play', // 'play' 或 'tutorial' 或 'ai'
-                tutorialStep: 0
+                tutorialStep: 0,
+                isThinking: false // 新增：AI是否正在思考
             };
 
             // 教学内容
@@ -456,7 +457,10 @@
                     return null;
                 }
                 
-                for (let i = 0; i < iterations; i++) {
+                // 限制最大模拟次数，防止卡死
+                const maxIterations = Math.min(iterations, availableMoves.length * 50);
+                
+                for (let i = 0; i < maxIterations; i++) {
                     let node = root;
                     // 选择
                     while (node.children.length > 0) {
@@ -470,6 +474,22 @@
                     const result = node.simulate();
                     // 反向传播
                     node.backpropagate(result);
+                    
+                    // 每100次迭代检查一次是否应该提前结束
+                    if (i % 100 === 0 && i > 0) {
+                        // 如果某个节点的访问次数明显高于其他节点，可以提前结束
+                        const bestChild = root.children.reduce((best, child) => {
+                            return child.visits > best.visits ? child : best;
+                        }, root.children[0]);
+                        
+                        // 如果最佳节点的访问次数超过其他节点平均访问次数的2倍
+                        const totalVisits = root.children.reduce((sum, child) => sum + child.visits, 0);
+                        const avgVisits = totalVisits / root.children.length;
+                        
+                        if (bestChild.visits > avgVisits * 2) {
+                            break;
+                        }
+                    }
                 }
                 
                 // 选择访问次数最多的子节点
@@ -538,7 +558,8 @@
                     koPosition: null,
                     gameOver: false,
                     mode: gameState.mode, // 保持当前模式
-                    tutorialStep: gameState.tutorialStep
+                    tutorialStep: gameState.tutorialStep,
+                    isThinking: false // 重置思考状态
                 };
                 
                 // 如果是教学模式，设置当前教学步骤的棋盘
@@ -820,6 +841,12 @@
 
             // 放置棋子
             function placeStone(x, y) {
+                // 如果AI正在思考，不允许落子
+                if (gameState.isThinking) {
+                    showNotification("AI正在思考，请稍候...", 'info');
+                    return false;
+                }
+                
                 // 如果是教学模式且不在最后一步，不允许放置棋子
                 if (gameState.mode === 'tutorial' && gameState.tutorialStep < tutorialSteps.length - 1) {
                     showNotification("请先完成当前教学步骤", 'info');
@@ -901,6 +928,7 @@
                 
                 // 如果是人机对弈模式且轮到AI
                 if (gameState.mode === 'ai' && gameState.currentPlayer === 'white') {
+                    gameState.isThinking = true;
                     setTimeout(() => {
                         aiMove();
                     }, 500);
@@ -929,20 +957,280 @@
 
             // 修改 AI 落子逻辑
             function aiMove() {
-                if (gameState.mode === 'ai' && gameState.currentPlayer === 'white') {
+                if (gameState.mode === 'ai' && gameState.currentPlayer === 'white' && gameState.isThinking) {
                     showNotification("AI正在思考...", 'info');
-                    setTimeout(() => {
-                        const move = monteCarloTreeSearch(gameState, 1000);
+                    
+                    // 使用Web Worker进行AI计算，避免阻塞主线程
+                    const workerCode = `
+                        // MCTSNode类定义（与主线程相同）
+                        class MCTSNode {
+                            constructor(parent, move, state) {
+                                this.parent = parent;
+                                this.move = move;
+                                this.state = state;
+                                this.children = [];
+                                this.visits = 0;
+                                this.wins = 0;
+                            }
+                            
+                            ucb1(c = 1.41) {
+                                if (this.visits === 0) {
+                                    return Infinity;
+                                }
+                                return (this.wins / this.visits) + c * Math.sqrt(Math.log(this.parent.visits) / this.visits);
+                            }
+                            
+                            selectChild() {
+                                return this.children.reduce((best, child) => {
+                                    return child.ucb1() > best.ucb1() ? child : best;
+                                }, this.children[0]);
+                            }
+                            
+                            expand() {
+                                const availableMoves = getAvailableMoves(this.state);
+                                for (const move of availableMoves) {
+                                    const newState = simulateMove(this.state, move);
+                                    const child = new MCTSNode(this, move, newState);
+                                    this.children.push(child);
+                                }
+                                return this.children[Math.floor(Math.random() * this.children.length)];
+                            }
+                            
+                            simulate() {
+                                let currentState = JSON.parse(JSON.stringify(this.state));
+                                let currentPlayer = getCurrentPlayer(currentState);
+                                while (!isGameOver(currentState)) {
+                                    const availableMoves = getAvailableMoves(currentState);
+                                    if (availableMoves.length === 0) {
+                                        break;
+                                    }
+                                    const randomMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+                                    currentState = simulateMove(currentState, randomMove);
+                                    currentPlayer = getCurrentPlayer(currentState);
+                                }
+                                return getWinner(currentState);
+                            }
+                            
+                            backpropagate(result) {
+                                let node = this;
+                                while (node) {
+                                    node.visits++;
+                                    if (result === getCurrentPlayer(node.state)) {
+                                        node.wins++;
+                                    }
+                                    node = node.parent;
+                                }
+                            }
+                        }
+                        
+                        // 游戏辅助函数（与主线程相同）
+                        function getAvailableMoves(state) {
+                            const moves = [];
+                            for (let y = 0; y < 19; y++) {
+                                for (let x = 0; x < 19; x++) {
+                                    if (state.board[y][x] === null) {
+                                        moves.push({ x, y });
+                                    }
+                                }
+                            }
+                            return moves;
+                        }
+                        
+                        function simulateMove(state, move) {
+                            const newState = JSON.parse(JSON.stringify(state));
+                            const currentPlayer = getCurrentPlayer(newState);
+                            newState.board[move.y][move.x] = currentPlayer;
+                            const opponentColor = currentPlayer === 'black' ? 'white' : 'black';
+                            const removedStones = removeDeadStones(newState, opponentColor);
+                            newState.capturedStones[currentPlayer] += removedStones.length;
+                            newState.currentPlayer = opponentColor;
+                            return newState;
+                        }
+                        
+                        function getCurrentPlayer(state) {
+                            return state.currentPlayer;
+                        }
+                        
+                        function isGameOver(state) {
+                            return false;
+                        }
+                        
+                        function getWinner(state) {
+                            if (state.capturedStones.black > state.capturedStones.white) {
+                                return 'black';
+                            } else if (state.capturedStones.white > state.capturedStones.black) {
+                                return 'white';
+                            }
+                            return null;
+                        }
+                        
+                        function removeDeadStones(state, color) {
+                            const removed = [];
+                            const visited = Array(19).fill().map(() => Array(19).fill(false));
+                            
+                            for (let y = 0; y < 19; y++) {
+                                for (let x = 0; x < 19; x++) {
+                                    if (state.board[y][x] === color && !visited[y][x]) {
+                                        const group = [];
+                                        const queue = [{ x, y }];
+                                        visited[y][x] = true;
+                                        group.push({ x, y });
+                                        
+                                        while (queue.length > 0) {
+                                            const { x: currentX, y: currentY } = queue.shift();
+                                            const directions = [
+                                                { dx: -1, dy: 0 },
+                                                { dx: 1, dy: 0 },
+                                                { dx: 0, dy: -1 },
+                                                { dx: 0, dy: 1 }
+                                            ];
+                                            
+                                            for (const { dx, dy } of directions) {
+                                                const newX = currentX + dx;
+                                                const newY = currentY + dy;
+                                                
+                                                if (newX < 0 || newX >= 19 || newY < 0 || newY >= 19) continue;
+                                                
+                                                if (state.board[newY][newX] === color && !visited[newY][newX]) {
+                                                    visited[newY][newX] = true;
+                                                    queue.push({ x: newX, y: newY });
+                                                    group.push({ x: newX, y: newY });
+                                                }
+                                            }
+                                        }
+                                        
+                                        let hasLiberty = false;
+                                        for (const { x: groupX, y: groupY } of group) {
+                                            const directions = [
+                                                { dx: -1, dy: 0 },
+                                                { dx: 1, dy: 0 },
+                                                { dx: 0, dy: -1 },
+                                                { dx: 0, dy: 1 }
+                                            ];
+                                            
+                                            for (const { dx, dy } of directions) {
+                                                const newX = groupX + dx;
+                                                const newY = groupY + dy;
+                                                
+                                                if (newX < 0 || newX >= 19 || newY < 0 || newY >= 19) continue;
+                                                
+                                                if (state.board[newY][newX] === null) {
+                                                    hasLiberty = true;
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            if (hasLiberty) break;
+                                        }
+                                        
+                                        if (!hasLiberty) {
+                                            for (const { x: groupX, y: groupY } of group) {
+                                                state.board[groupY][groupX] = null;
+                                                removed.push({ x: groupX, y: groupY });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            return removed;
+                        }
+                        
+                        // 蒙特卡罗树搜索算法
+                        function monteCarloTreeSearch(state, iterations = 1000) {
+                            const root = new MCTSNode(null, null, state);
+                            const availableMoves = getAvailableMoves(state);
+                            if (availableMoves.length === 0) {
+                                return null;
+                            }
+                            
+                            const maxIterations = Math.min(iterations, availableMoves.length * 50);
+                            
+                            for (let i = 0; i < maxIterations; i++) {
+                                let node = root;
+                                while (node.children.length > 0) {
+                                    node = node.selectChild();
+                                }
+                                
+                                if (!isGameOver(node.state)) {
+                                    node = node.expand();
+                                }
+                                
+                                const result = node.simulate();
+                                node.backpropagate(result);
+                                
+                                if (i % 100 === 0 && i > 0) {
+                                    const bestChild = root.children.reduce((best, child) => {
+                                        return child.visits > best.visits ? child : best;
+                                    }, root.children[0]);
+                                    
+                                    const totalVisits = root.children.reduce((sum, child) => sum + child.visits, 0);
+                                    const avgVisits = totalVisits / root.children.length;
+                                    
+                                    if (bestChild.visits > avgVisits * 2) {
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            const bestChild = root.children.reduce((best, child) => {
+                                return child.visits > best.visits ? child : best;
+                            }, root.children[0]);
+                            
+                            return bestChild.move;
+                        }
+                        
+                        // 监听主线程消息
+                        self.onmessage = function(e) {
+                            const { gameState, iterations } = e.data;
+                            const move = monteCarloTreeSearch(gameState, iterations);
+                            self.postMessage(move);
+                        };
+                    `;
+                    
+                    const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+                    const workerUrl = URL.createObjectURL(workerBlob);
+                    const worker = new Worker(workerUrl);
+                    
+                    // 设置超时计时器
+                    const timeoutId = setTimeout(() => {
+                        worker.terminate();
+                        gameState.isThinking = false;
+                        showNotification("AI思考超时，随机落子", 'warning');
+                        
+                        // 随机选择一个位置落子
+                        const availableMoves = getAvailableMoves(gameState);
+                        if (availableMoves.length > 0) {
+                            const randomMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+                            placeStone(randomMove.x, randomMove.y);
+                        } else {
+                            // 没有可用位置，切换回玩家回合
+                            gameState.currentPlayer = 'black';
+                            updateGameUI();
+                        }
+                    }, 10000); // 设置10秒超时
+                    
+                    // 监听worker消息
+                    worker.onmessage = function(e) {
+                        clearTimeout(timeoutId);
+                        gameState.isThinking = false;
+                        
+                        const move = e.data;
                         if (move) {
                             placeStone(move.x, move.y);
-                            showNotification(`AI在${ALPHABET[move.x]}${BOARD_SIZE - move.y}落子`, 'info');
                         } else {
                             showNotification("AI没有找到可用的落子位置", 'info');
                             // 切换回玩家回合
                             gameState.currentPlayer = 'black';
                             updateGameUI();
                         }
-                    }, 500);
+                        
+                        worker.terminate();
+                        URL.revokeObjectURL(workerUrl);
+                    };
+                    
+                    // 发送数据到worker
+                    worker.postMessage({ gameState, iterations: 1000 });
                 }
             }
 
